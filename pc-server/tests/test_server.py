@@ -11,9 +11,6 @@ from pathlib import Path
 pytestmark = pytest.mark.asyncio
 
 
-TEST_TOKEN = "test-token-12345"
-
-
 # ── /api/ping ──
 
 async def test_ping(client):
@@ -27,13 +24,12 @@ async def test_ping(client):
 
 # ── /api/text ──
 
-async def test_text_success(client, auth_headers):
+async def test_text_success(client):
     with patch("server.copy_to_clipboard") as mock_clip, \
          patch("server.notify"):
         resp = await client.post(
             "/api/text",
             json={"content": "Hello from phone!"},
-            headers=auth_headers,
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -42,39 +38,30 @@ async def test_text_success(client, auth_headers):
     mock_clip.assert_called_once_with("Hello from phone!")
 
 
-async def test_text_empty(client, auth_headers):
+async def test_text_empty(client):
     with patch("server.copy_to_clipboard"), patch("server.notify"):
         resp = await client.post(
             "/api/text",
             json={"content": ""},
-            headers=auth_headers,
         )
     assert resp.status_code == 400
 
 
 async def test_text_no_auth(client):
-    resp = await client.post("/api/text", json={"content": "test"})
-    assert resp.status_code == 422 or resp.status_code == 401
-
-
-async def test_text_wrong_token(client):
-    resp = await client.post(
-        "/api/text",
-        json={"content": "test"},
-        headers={"Authorization": "Bearer wrong-token"},
-    )
-    assert resp.status_code == 401
+    """无需认证即可发送文本。"""
+    with patch("server.copy_to_clipboard"), patch("server.notify"):
+        resp = await client.post("/api/text", json={"content": "test"})
+    assert resp.status_code == 200
 
 
 # ── /api/file ──
 
-async def test_file_upload(client, auth_headers, config):
+async def test_file_upload(client, config):
     content = b"fake image content here"
     with patch("server.notify"):
         resp = await client.post(
             "/api/file",
             files={"file": ("test_photo.jpg", io.BytesIO(content), "image/jpeg")},
-            headers=auth_headers,
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -88,7 +75,7 @@ async def test_file_upload(client, auth_headers, config):
     assert saved.read_bytes() == content
 
 
-async def test_file_duplicate_name(client, auth_headers, config):
+async def test_file_duplicate_name(client, config):
     """上传同名文件应自动追加序号。"""
     content1 = b"file v1"
     content2 = b"file v2"
@@ -96,12 +83,10 @@ async def test_file_duplicate_name(client, auth_headers, config):
         resp1 = await client.post(
             "/api/file",
             files={"file": ("dup.txt", io.BytesIO(content1), "text/plain")},
-            headers=auth_headers,
         )
         resp2 = await client.post(
             "/api/file",
             files={"file": ("dup.txt", io.BytesIO(content2), "text/plain")},
-            headers=auth_headers,
         )
     assert resp1.status_code == 200
     assert resp2.status_code == 200
@@ -109,26 +94,24 @@ async def test_file_duplicate_name(client, auth_headers, config):
            resp1.json()["saved_to"] != resp2.json()["saved_to"]
 
 
-async def test_file_too_large(client, auth_headers, config):
+async def test_file_too_large(client, config):
     """超过大小限制应返回 413。"""
     big_content = b"x" * (config.max_file_size_bytes + 1)
     with patch("server.notify"):
         resp = await client.post(
             "/api/file",
             files={"file": ("big.bin", io.BytesIO(big_content), "application/octet-stream")},
-            headers=auth_headers,
         )
     assert resp.status_code == 413
 
 
-async def test_file_path_traversal(client, auth_headers, config):
+async def test_file_path_traversal(client, config):
     """文件名含路径穿越字符应被清洗。"""
     content = b"safe content"
     with patch("server.notify"):
         resp = await client.post(
             "/api/file",
             files={"file": ("../../evil.txt", io.BytesIO(content), "text/plain")},
-            headers=auth_headers,
         )
     assert resp.status_code == 200
     saved_path = resp.json()["saved_to"]
@@ -137,17 +120,19 @@ async def test_file_path_traversal(client, auth_headers, config):
 
 
 async def test_file_no_auth(client):
-    resp = await client.post(
-        "/api/file",
-        files={"file": ("test.txt", io.BytesIO(b"data"), "text/plain")},
-    )
-    assert resp.status_code == 422 or resp.status_code == 401
+    """文件上传无需认证。"""
+    with patch("server.notify"):
+        resp = await client.post(
+            "/api/file",
+            files={"file": ("test.txt", io.BytesIO(b"data"), "text/plain")},
+        )
+    assert resp.status_code == 200
 
 
 # ── /api/clipboard ──
 
-async def test_get_clipboard(client, auth_headers):
+async def test_get_clipboard(client):
     with patch("server.get_clipboard", return_value="pc clipboard text"):
-        resp = await client.get("/api/clipboard", headers=auth_headers)
+        resp = await client.get("/api/clipboard")
     assert resp.status_code == 200
     assert resp.json()["content"] == "pc clipboard text"

@@ -12,16 +12,12 @@ from config import AppConfig
 from server import create_app
 
 
-TEST_TOKEN = "test-token-12345"
-
-
 @pytest.fixture()
 def config(tmp_path):
     """创建一个使用临时目录的测试配置。"""
     return AppConfig(
         port=18765,
         save_dir=str(tmp_path / "received"),
-        token=TEST_TOKEN,
         max_file_size_mb=1,  # 测试用，限制 1MB
     )
 
@@ -38,8 +34,3 @@ def client(app):
     from httpx import AsyncClient, ASGITransport
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
-
-
-@pytest.fixture()
-def auth_headers():
-    return {"Authorization": f"Bearer {TEST_TOKEN}"}

@@ -1,6 +1,5 @@
 import json
 import os
-import uuid
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
@@ -21,15 +20,13 @@ def _config_path() -> Path:
 class AppConfig:
     port: int = 8765
     save_dir: str = ""
-    token: str = ""
     max_file_size_mb: int = 500
     auto_start: bool = False
+    silent_mode: bool = False
 
     def __post_init__(self):
         if not self.save_dir:
             self.save_dir = _default_save_dir()
-        if not self.token:
-            self.token = str(uuid.uuid4())
 
     @property
     def max_file_size_bytes(self) -> int:

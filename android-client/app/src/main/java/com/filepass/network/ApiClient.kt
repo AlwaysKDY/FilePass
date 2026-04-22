@@ -17,6 +17,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.io.InputStream
 import java.net.ConnectException
+import java.net.Proxy
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
@@ -26,9 +27,9 @@ import java.util.concurrent.TimeUnit
  */
 class ApiClient(
     private val baseUrl: String,
-    private val token: String,
 ) {
     private val client = OkHttpClient.Builder()
+        .proxy(Proxy.NO_PROXY)
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)
@@ -41,7 +42,6 @@ class ApiClient(
             val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
             val request = Request.Builder()
                 .url("$baseUrl/api/text")
-                .addHeader("Authorization", "Bearer $token")
                 .post(body)
                 .build()
             client.newCall(request).execute().use { resp ->
@@ -80,7 +80,6 @@ class ApiClient(
 
             val request = Request.Builder()
                 .url("$baseUrl/api/file")
-                .addHeader("Authorization", "Bearer $token")
                 .post(requestBody)
                 .build()
 
@@ -112,7 +111,6 @@ class ApiClient(
         runCatching {
             val request = Request.Builder()
                 .url("$baseUrl/api/clipboard")
-                .addHeader("Authorization", "Bearer $token")
                 .get()
                 .build()
             client.newCall(request).execute().use { resp ->
@@ -130,7 +128,6 @@ class ApiClient(
 
     private fun httpError(code: Int, body: String?): IOException {
         val msg = when (code) {
-            401 -> "认证失败，请检查 Token"
             413 -> "文件超过大小限制"
             else -> "HTTP $code"
         }

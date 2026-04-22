@@ -5,8 +5,7 @@
   2. 文件传输（小文件/同名文件去重/超限拒绝/路径穿越防护）
   3. 剪贴板获取
   4. Ping 检测
-  5. 错误场景（Token 错误/空内容/大文件）
-  6. 并发请求
+  5. 并发请求
 """
 import asyncio
 import os
@@ -16,12 +15,11 @@ from httpx import AsyncClient, ASGITransport
 
 # ── 文本传输 ──
 
-async def test_text_roundtrip(client, auth_headers):
+async def test_text_roundtrip(client):
     """文本推送后应能通过剪贴板端点读回。"""
     resp = await client.post(
         "/api/text",
         json={"content": "integration test"},
-        headers=auth_headers,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -31,49 +29,45 @@ async def test_text_roundtrip(client, auth_headers):
     # 读回剪贴板（跳过，因为测试环境可能无剪贴板）
 
 
-async def test_text_long(client, auth_headers):
+async def test_text_long(client):
     """发送 10KB 文本。"""
     long_text = "A" * 10240
     resp = await client.post(
         "/api/text",
         json={"content": long_text},
-        headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["length"] == 10240
 
 
-async def test_text_unicode(client, auth_headers):
+async def test_text_unicode(client):
     """中日韩 + emoji 混合文本。"""
     text = "你好世界🎉こんにちは"
     resp = await client.post(
         "/api/text",
         json={"content": text},
-        headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["length"] == len(text)
 
 
-async def test_text_empty_rejected(client, auth_headers):
+async def test_text_empty_rejected(client):
     """空文本应被拒绝。"""
     resp = await client.post(
         "/api/text",
         json={"content": ""},
-        headers=auth_headers,
     )
     assert resp.status_code == 400
 
 
 # ── 文件传输 ──
 
-async def test_file_upload(client, auth_headers, config):
+async def test_file_upload(client, config):
     """上传普通文件并验证落盘。"""
     content = b"hello from android" * 100
     resp = await client.post(
         "/api/file",
         files={"file": ("test.txt", content, "application/octet-stream")},
-        headers=auth_headers,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -87,13 +81,12 @@ async def test_file_upload(client, auth_headers, config):
         assert f.read() == content
 
 
-async def test_file_dedup(client, auth_headers, config):
+async def test_file_dedup(client, config):
     """同名文件自动追加序号。"""
     for i in range(3):
         resp = await client.post(
             "/api/file",
             files={"file": ("dup.txt", b"data", "application/octet-stream")},
-            headers=auth_headers,
         )
         assert resp.status_code == 200
 
@@ -103,14 +96,13 @@ async def test_file_dedup(client, auth_headers, config):
     assert os.path.exists(os.path.join(save_dir, "dup_2.txt"))
 
 
-async def test_file_oversize_rejected(client, auth_headers, config):
+async def test_file_oversize_rejected(client, config):
     """超过 max_file_size 的文件应返回 413。"""
     # config 限制 1MB
     big = b"X" * (1024 * 1024 + 1)
     resp = await client.post(
         "/api/file",
         files={"file": ("big.bin", big, "application/octet-stream")},
-        headers=auth_headers,
     )
     assert resp.status_code == 413
 
@@ -119,12 +111,11 @@ async def test_file_oversize_rejected(client, auth_headers, config):
     assert not os.path.exists(saved)
 
 
-async def test_file_path_traversal(client, auth_headers, config):
+async def test_file_path_traversal(client, config):
     """路径穿越攻击应被阻止。"""
     resp = await client.post(
         "/api/file",
         files={"file": ("../../../etc/passwd", b"hack", "application/octet-stream")},
-        headers=auth_headers,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -146,33 +137,14 @@ async def test_ping(client):
     assert data["version"] == "1.0.0"
 
 
-# ── 认证 ──
-
-async def test_auth_wrong_token(client):
-    """错误 Token 应返回 401。"""
-    resp = await client.post(
-        "/api/text",
-        json={"content": "test"},
-        headers={"Authorization": "Bearer wrong-token"},
-    )
-    assert resp.status_code == 401
-
-
-async def test_auth_missing_header(client):
-    """缺少 Authorization 应返回 422。"""
-    resp = await client.post("/api/text", json={"content": "test"})
-    assert resp.status_code == 422
-
-
 # ── 并发 ──
 
-async def test_concurrent_text_sends(client, auth_headers):
+async def test_concurrent_text_sends(client):
     """10 个并发文本发送都应成功。"""
     async def send(i):
         resp = await client.post(
             "/api/text",
             json={"content": f"concurrent msg {i}"},
-            headers=auth_headers,
         )
         return resp.status_code
 
@@ -180,13 +152,12 @@ async def test_concurrent_text_sends(client, auth_headers):
     assert all(code == 200 for code in results)
 
 
-async def test_concurrent_file_uploads(client, auth_headers, config):
+async def test_concurrent_file_uploads(client, config):
     """5 个并发文件上传都应成功。"""
     async def upload(i):
         resp = await client.post(
             "/api/file",
             files={"file": (f"concurrent_{i}.txt", f"data {i}".encode(), "application/octet-stream")},
-            headers=auth_headers,
         )
         return resp.status_code
 

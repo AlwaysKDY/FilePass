@@ -21,10 +21,6 @@ class AppConfig(context: Context) {
         get() = prefs.getInt(KEY_PORT, DEFAULT_PORT)
         set(value) = prefs.edit { putInt(KEY_PORT, value) }
 
-    var token: String
-        get() = prefs.getString(KEY_TOKEN, "") ?: ""
-        set(value) = prefs.edit { putString(KEY_TOKEN, value) }
-
     var isConnected: Boolean
         get() = prefs.getBoolean(KEY_CONNECTED, false)
         set(value) = prefs.edit { putBoolean(KEY_CONNECTED, value) }
@@ -33,7 +29,7 @@ class AppConfig(context: Context) {
         get() = if (pcHost.isNotEmpty()) "http://$pcHost:$pcPort" else ""
 
     val isConfigured: Boolean
-        get() = pcHost.isNotEmpty() && token.isNotEmpty()
+        get() = pcHost.isNotEmpty()
 
     fun clear() {
         prefs.edit { clear() }
@@ -43,7 +39,6 @@ class AppConfig(context: Context) {
         private const val PREFS_NAME = "filepass_config"
         private const val KEY_HOST = "pc_host"
         private const val KEY_PORT = "pc_port"
-        private const val KEY_TOKEN = "token"
         private const val KEY_CONNECTED = "connected"
         const val DEFAULT_PORT = 8765
     }

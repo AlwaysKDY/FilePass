@@ -54,7 +54,7 @@ class PushTileService : TileService() {
             it.updateTile()
         }
 
-        val apiClient = ApiClient(config.baseUrl, config.token)
+        val apiClient = ApiClient(config.baseUrl)
         scope.launch {
             val result = apiClient.sendText(text)
             result.onSuccess { length ->

@@ -1,15 +1,15 @@
+import asyncio
 import os
 import socket
 import logging
 import aiofiles
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from config import AppConfig
-from auth import verify_token
 from clipboard import copy_to_clipboard, get_clipboard
 from notifier import notify
 from utils import sanitize_filename
@@ -37,7 +37,6 @@ def create_app(config: AppConfig) -> FastAPI:
         logger.error(f"未处理异常: {exc}", exc_info=True)
         return JSONResponse(status_code=500, content={"detail": "服务器内部错误"})
 
-    token_dep = verify_token(config.token)
     save_dir = Path(os.path.expanduser(config.save_dir))
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,20 +49,20 @@ def create_app(config: AppConfig) -> FastAPI:
         }
 
     @app.post("/api/text")
-    async def receive_text(payload: TextPayload, _token: str = Depends(token_dep)):
+    async def receive_text(payload: TextPayload):
         text = payload.content
         if not text:
             raise HTTPException(400, "文本内容为空")
-        copy_to_clipboard(text)
+        await asyncio.to_thread(copy_to_clipboard, text)
         length = len(text)
-        notify("FilePass", f"已接收文本 ({length}字)")
+        if not config.silent_mode:
+            asyncio.ensure_future(asyncio.to_thread(notify, "FilePass", f"已接收文本 ({length}字)"))
         logger.info(f"已接收文本 ({length}字)")
         return {"status": "ok", "length": length}
 
     @app.post("/api/file")
     async def receive_file(
         file: UploadFile = File(...),
-        _token: str = Depends(token_dep),
     ):
         if not file.filename:
             raise HTTPException(400, "缺少文件名")
@@ -98,7 +97,8 @@ def create_app(config: AppConfig) -> FastAPI:
             raise HTTPException(413, f"文件超过大小限制 ({config.max_file_size_mb}MB)")
 
         size_display = f"{total_size / 1024 / 1024:.1f}MB" if total_size > 1024 * 1024 else f"{total_size / 1024:.1f}KB"
-        notify("FilePass", f"已接收 {safe_name} ({size_display})")
+        if not config.silent_mode:
+            asyncio.ensure_future(asyncio.to_thread(notify, "FilePass", f"已接收 {safe_name} ({size_display})"))
         logger.info(f"已接收文件 {safe_name} ({size_display}) -> {dest}")
         return {
             "status": "ok",
@@ -108,9 +108,9 @@ def create_app(config: AppConfig) -> FastAPI:
         }
 
     @app.get("/api/clipboard")
-    async def get_pc_clipboard(_token: str = Depends(token_dep)):
+    async def get_pc_clipboard():
         try:
-            text = get_clipboard()
+            text = await asyncio.to_thread(get_clipboard)
             return {"content": text}
         except Exception as e:
             logger.error(f"读取剪贴板失败: {e}")

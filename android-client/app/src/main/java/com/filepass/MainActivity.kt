@@ -88,7 +88,6 @@ fun MainScreen(
 
     var host by remember { mutableStateOf(config.pcHost) }
     var port by remember { mutableStateOf(config.pcPort.toString()) }
-    var token by remember { mutableStateOf(config.token) }
     var status by remember { mutableStateOf<ConnectionStatus>(ConnectionStatus.Unknown) }
     var isSearching by remember { mutableStateOf(false) }
     var serviceRunning by remember { mutableStateOf(false) }
@@ -140,15 +139,6 @@ fun MainScreen(
                 )
             }
 
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("Token") },
-                placeholder = { Text("从 PC 端托盘菜单获取") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-
             // ── 操作按钮 ──
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -164,6 +154,22 @@ fun MainScreen(
                             port = foundPort.toString()
                             isSearching = false
                             onStopDiscovery()
+
+                            // 自动保存并测试连接
+                            config.pcHost = foundHost
+                            config.pcPort = foundPort
+                            scope.launch {
+                                val api = ApiClient(config.baseUrl)
+                                api.ping()
+                                    .onSuccess { name ->
+                                        status = ConnectionStatus.Connected(name)
+                                        config.isConnected = true
+                                    }
+                                    .onFailure { e ->
+                                        status = ConnectionStatus.Failed(e.message ?: "未知错误")
+                                        config.isConnected = false
+                                    }
+                            }
                         }
                     },
                     enabled = !isSearching,
@@ -180,11 +186,10 @@ fun MainScreen(
                         val portInt = port.toIntOrNull() ?: AppConfig.DEFAULT_PORT
                         config.pcHost = host
                         config.pcPort = portInt
-                        config.token = token
                         status = ConnectionStatus.Testing
 
                         scope.launch {
-                            val api = ApiClient(config.baseUrl, config.token)
+                            val api = ApiClient(config.baseUrl)
                             api.ping()
                                 .onSuccess { name ->
                                     status = ConnectionStatus.Connected(name)

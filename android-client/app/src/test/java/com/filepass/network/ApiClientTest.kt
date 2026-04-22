@@ -23,7 +23,7 @@ class ApiClientTest {
         server = MockWebServer()
         server.start()
         val baseUrl = server.url("/").toString().trimEnd('/')
-        apiClient = ApiClient(baseUrl, "test-token")
+        apiClient = ApiClient(baseUrl)
     }
 
     @After
@@ -51,7 +51,6 @@ class ApiClientTest {
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/api/text", request.path)
-        assertEquals("Bearer test-token", request.getHeader("Authorization"))
         assertTrue(request.body.readUtf8().contains("\"content\":\"hello\""))
     }
 
@@ -68,13 +67,13 @@ class ApiClientTest {
     fun `sendText auth failure`() = runTest {
         server.enqueue(
             MockResponse()
-                .setResponseCode(401)
-                .setBody("""{"detail":"认证失败"}""")
+                .setResponseCode(500)
+                .setBody("""{"detail":"server error"}""")
         )
 
-        val result = apiClient.sendText("unauthorized")
+        val result = apiClient.sendText("error")
         assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()?.message?.contains("认证失败") == true)
+        assertTrue(result.exceptionOrNull()?.message?.contains("500") == true)
     }
 
     @Test
@@ -140,7 +139,6 @@ class ApiClientTest {
         val request = server.takeRequest()
         assertEquals("GET", request.method)
         assertEquals("/api/clipboard", request.path)
-        assertEquals("Bearer test-token", request.getHeader("Authorization"))
     }
 
     @Test
@@ -152,18 +150,6 @@ class ApiClientTest {
     }
 
     // ── 请求格式验证 ──
-
-    @Test
-    fun `authorization header is present in sendText`() = runTest {
-        server.enqueue(
-            MockResponse().setResponseCode(200)
-                .setBody("""{"status":"ok","length":1}""")
-        )
-
-        apiClient.sendText("x")
-        val request = server.takeRequest()
-        assertEquals("Bearer test-token", request.getHeader("Authorization"))
-    }
 
     @Test
     fun `content type is json for sendText`() = runTest {

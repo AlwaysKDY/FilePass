@@ -33,7 +33,6 @@ class AppConfigTest {
     fun `default values are correct`() {
         assertEquals("", config.pcHost)
         assertEquals(8765, config.pcPort)
-        assertEquals("", config.token)
         assertFalse(config.isConnected)
         assertFalse(config.isConfigured)
         assertEquals("", config.baseUrl)
@@ -52,23 +51,14 @@ class AppConfigTest {
     }
 
     @Test
-    fun `set and get token`() {
-        config.token = "my-secret-token"
-        assertEquals("my-secret-token", config.token)
-    }
-
-    @Test
-    fun `isConfigured requires both host and token`() {
+    fun `isConfigured requires host`() {
         assertFalse(config.isConfigured)
 
         config.pcHost = "192.168.1.1"
-        assertFalse(config.isConfigured) // token still empty
-
-        config.token = "abc"
-        assertTrue(config.isConfigured) // both set
+        assertTrue(config.isConfigured)
 
         config.pcHost = ""
-        assertFalse(config.isConfigured) // host cleared
+        assertFalse(config.isConfigured)
     }
 
     @Test
@@ -94,7 +84,6 @@ class AppConfigTest {
     @Test
     fun `clear resets all values`() {
         config.pcHost = "1.2.3.4"
-        config.token = "tok"
         config.pcPort = 1234
         config.isConnected = true
 
@@ -102,18 +91,15 @@ class AppConfigTest {
 
         assertEquals("", config.pcHost)
         assertEquals(8765, config.pcPort) // defaults back
-        assertEquals("", config.token)
         assertFalse(config.isConnected)
     }
 
     @Test
     fun `persistence across instances`() {
         config.pcHost = "192.168.0.50"
-        config.token = "persist-token"
 
         // Create a new instance pointing to same SharedPreferences
         val config2 = AppConfig(context)
         assertEquals("192.168.0.50", config2.pcHost)
-        assertEquals("persist-token", config2.token)
     }
 }

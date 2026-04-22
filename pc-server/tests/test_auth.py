@@ -1,52 +1,35 @@
-"""测试 auth.py"""
+"""测试 — 验证所有端点无需认证即可访问"""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from fastapi import FastAPI, Depends, HTTPException
-from httpx import AsyncClient, ASGITransport
-from auth import verify_token
+from unittest.mock import patch
 
 
 pytestmark = pytest.mark.asyncio
 
-TOKEN = "secret-token-xyz"
 
-
-@pytest.fixture()
-def auth_app():
-    app = FastAPI()
-    dep = verify_token(TOKEN)
-
-    @app.get("/protected")
-    async def protected(_t: str = Depends(dep)):
-        return {"ok": True}
-
-    return app
-
-
-@pytest.fixture()
-async def auth_client(auth_app):
-    transport = ASGITransport(app=auth_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-
-
-async def test_valid_token(auth_client):
-    resp = await auth_client.get("/protected", headers={"Authorization": f"Bearer {TOKEN}"})
+async def test_ping_no_auth(client):
+    resp = await client.get("/api/ping")
     assert resp.status_code == 200
 
 
-async def test_invalid_token(auth_client):
-    resp = await auth_client.get("/protected", headers={"Authorization": "Bearer wrong"})
-    assert resp.status_code == 401
+async def test_text_no_auth(client):
+    with patch("server.copy_to_clipboard"), patch("server.notify"):
+        resp = await client.post("/api/text", json={"content": "test"})
+    assert resp.status_code == 200
 
 
-async def test_missing_header(auth_client):
-    resp = await auth_client.get("/protected")
-    assert resp.status_code == 422  # FastAPI validation error
+async def test_clipboard_no_auth(client):
+    with patch("server.get_clipboard", return_value="text"):
+        resp = await client.get("/api/clipboard")
+    assert resp.status_code == 200
 
 
-async def test_bad_scheme(auth_client):
-    resp = await auth_client.get("/protected", headers={"Authorization": f"Basic {TOKEN}"})
-    assert resp.status_code == 401
+async def test_file_no_auth(client, config):
+    with patch("server.notify"):
+        resp = await client.post(
+            "/api/file",
+            files={"file": ("test.txt", b"data", "text/plain")},
+        )
+    assert resp.status_code == 200

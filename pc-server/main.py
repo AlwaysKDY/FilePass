@@ -33,7 +33,6 @@ def main():
     logger.info(f"FilePass 启动中...")
     logger.info(f"  局域网 IP : {ip}")
     logger.info(f"  端口      : {config.port}")
-    logger.info(f"  Token     : {config.token}")
     logger.info(f"  保存目录  : {config.save_dir}")
 
     # 1. 后台线程启动 FastAPI

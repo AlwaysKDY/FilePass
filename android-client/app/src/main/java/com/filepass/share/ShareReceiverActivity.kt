@@ -32,7 +32,7 @@ class ShareReceiverActivity : ComponentActivity() {
             return
         }
 
-        val apiClient = ApiClient(config.baseUrl, config.token)
+        val apiClient = ApiClient(config.baseUrl)
 
         when (intent?.action) {
             Intent.ACTION_SEND -> handleSend(apiClient)
