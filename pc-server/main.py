@@ -1,5 +1,6 @@
 import sys
 import logging
+import multiprocessing
 import threading
 import uvicorn
 
@@ -58,4 +59,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
