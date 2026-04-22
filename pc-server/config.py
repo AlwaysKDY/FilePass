@@ -21,8 +21,8 @@ class AppConfig:
     port: int = 8765
     save_dir: str = ""
     max_file_size_mb: int = 500
-    auto_start: bool = False
-    silent_mode: bool = False
+    auto_start: bool = True
+    silent_mode: bool = True
 
     def __post_init__(self):
         if not self.save_dir:

@@ -182,9 +182,18 @@ def main():
         logger.critical(f"获取本机 IP 失败:\n{traceback.format_exc()}")
         ip = "127.0.0.1"
 
-    # 0. 终止旧实例 + 确保防火墙
+    # 0. 终止旧实例 + 确保防火墙 + 自动注册开机自启
     _kill_stale_instance(config.port)
     _ensure_firewall_rule(config.port)
+
+    if config.auto_start:
+        try:
+            from tray import _set_auto_start, _is_auto_start_enabled
+            if not _is_auto_start_enabled():
+                _set_auto_start(True)
+                logger.info("已自动注册开机自启")
+        except Exception:
+            logger.warning(f"注册开机自启失败:\n{traceback.format_exc()}")
 
     logger.info(f"  端口      : {config.port}")
     logger.info(f"  保存目录  : {config.save_dir}")

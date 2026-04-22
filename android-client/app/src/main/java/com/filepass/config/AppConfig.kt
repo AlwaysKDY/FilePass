@@ -31,6 +31,20 @@ class AppConfig(context: Context) {
     val isConfigured: Boolean
         get() = pcHost.isNotEmpty()
 
+    /** 曾经成功连接过的 IP 库，格式 "host:port" */
+    val ipLibraryPairs: List<Pair<String, Int>>
+        get() = (prefs.getStringSet(KEY_IP_LIBRARY, emptySet()) ?: emptySet()).mapNotNull {
+            val idx = it.lastIndexOf(':')
+            if (idx < 0) null
+            else it.substring(0, idx) to (it.substring(idx + 1).toIntOrNull() ?: return@mapNotNull null)
+        }
+
+    fun addToIpLibrary(host: String, port: Int) {
+        val lib = (prefs.getStringSet(KEY_IP_LIBRARY, emptySet()) ?: emptySet()).toMutableSet()
+        lib.add("$host:$port")
+        prefs.edit { putStringSet(KEY_IP_LIBRARY, lib) }
+    }
+
     fun clear() {
         prefs.edit { clear() }
     }
@@ -40,6 +54,7 @@ class AppConfig(context: Context) {
         private const val KEY_HOST = "pc_host"
         private const val KEY_PORT = "pc_port"
         private const val KEY_CONNECTED = "connected"
+        private const val KEY_IP_LIBRARY = "ip_library"
         const val DEFAULT_PORT = 8765
     }
 }

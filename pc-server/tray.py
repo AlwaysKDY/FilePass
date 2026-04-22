@@ -111,18 +111,7 @@ class TrayApp:
             f"FilePass - {self.ip}:{self.config.port}",
             menu=pystray.Menu(
                 pystray.MenuItem(
-                    f"IP: {self.ip}:{self.config.port}", None, enabled=False
-                ),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem(
-                    "静默模式",
-                    lambda: self._toggle_silent(),
-                    checked=lambda _: self.config.silent_mode,
-                ),
-                pystray.MenuItem(
-                    "开机自启",
-                    lambda: self._toggle_auto_start(),
-                    checked=lambda _: _is_auto_start_enabled(),
+                    f"{self.ip}:{self.config.port}", None, enabled=False
                 ),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("打开接收文件夹", lambda: self._open_folder()),

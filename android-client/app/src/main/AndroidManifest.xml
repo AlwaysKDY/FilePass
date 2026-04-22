@@ -58,6 +58,9 @@
             </intent-filter>
         </service>
 
+        <!-- 透明 Activity：由磁贴启动，负责前台读剪贴板+发送 -->
+        <activity android:name=".tile.ClipboardSendActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:launchMode="singleInstance" android:excludeFromRecents="true" />
+
         <!-- 后台保活服务 -->
         <service android:name=".service.KeepAliveService" android:exported="false" android:foregroundServiceType="specialUse" />
 
