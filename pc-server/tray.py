@@ -101,9 +101,13 @@ class TrayApp:
             self.on_quit()
 
     def run(self):
+        logger.info("TrayApp.run() 开始")
+        img = _load_icon()
+        logger.info(f"图标已加载: size={img.size}, mode={img.mode}")
+
         icon = pystray.Icon(
             "FilePass",
-            _load_icon(),
+            img,
             f"FilePass - {self.ip}:{self.config.port}",
             menu=pystray.Menu(
                 pystray.MenuItem(
@@ -125,4 +129,10 @@ class TrayApp:
                 pystray.MenuItem("退出", lambda: self._quit(icon)),
             ),
         )
-        icon.run()
+        logger.info("pystray.Icon 对象已创建，即将调用 icon.run()")
+        try:
+            icon.run()
+        except Exception:
+            import traceback
+            logger.critical(f"icon.run() 异常:\n{traceback.format_exc()}")
+        logger.info("icon.run() 已返回（托盘已退出）")
