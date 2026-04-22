@@ -46,4 +46,5 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     icon=None,
+    distpath='../release',
 )

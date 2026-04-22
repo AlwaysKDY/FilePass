@@ -31,6 +31,22 @@ android {
         }
     }
 
+    // Release APK 构建后自动复制到根目录 release/
+    applicationVariants.all {
+        if (buildType.name == "release") {
+            val variant = this
+            tasks.named("assemble${variant.name.replaceFirstChar { it.uppercaseChar() }}") {
+                doLast {
+                    val apk = variant.outputs.first().outputFile
+                    val dest = rootProject.rootDir.parentFile.resolve("release/FilePass.apk")
+                    dest.parentFile.mkdirs()
+                    apk.copyTo(dest, overwrite = true)
+                    println("APK copied to: ${dest.absolutePath}")
+                }
+            }
+        }
+    }
+
     buildFeatures {
         compose = true
     }
