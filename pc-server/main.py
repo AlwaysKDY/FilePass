@@ -1,5 +1,7 @@
 import sys
 import os
+import socket
+import subprocess
 import logging
 import multiprocessing
 import threading
@@ -52,11 +54,9 @@ def _setup_logging():
     root.setLevel(logging.DEBUG)
     root.addHandler(fh)
 
-    # PIL 等三方库的 DEBUG 日志太多，只保留 INFO 以上
     logging.getLogger("PIL").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-    # 非 frozen 模式下再加控制台输出
     if not getattr(sys, "frozen", False):
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
@@ -67,6 +67,68 @@ def _setup_logging():
 
 
 logger = logging.getLogger("filepass")
+
+
+def _kill_stale_instance(port: int) -> None:
+    """若端口已被占用，终止占用该端口的旧进程（单例保证）。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    in_use = (sock.connect_ex(("127.0.0.1", port)) == 0)
+    sock.close()
+
+    if not in_use:
+        return
+
+    logger.warning(f"端口 {port} 已被旧实例占用，正在终止旧进程…")
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano"],
+            text=True, encoding="gbk", errors="ignore"
+        )
+        for line in out.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                if parts:
+                    pid = int(parts[-1])
+                    if pid != os.getpid():
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True
+                        )
+                        logger.info(f"已终止旧实例 PID={pid}")
+        time.sleep(0.8)
+    except Exception:
+        logger.warning(f"终止旧实例失败（请手动关闭旧进程）:\n{traceback.format_exc()}")
+
+
+def _ensure_firewall_rule(port: int) -> None:
+    """尝试添加 Windows 防火墙规则放行端口（首次运行时执行，需要管理员权限）。"""
+    rule_name = "FilePass-Server"
+    try:
+        result = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
+            capture_output=True, text=True, encoding="gbk", errors="ignore"
+        )
+        if rule_name not in result.stdout:
+            ret = subprocess.run([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name={rule_name}", "dir=in", "action=allow",
+                "protocol=TCP", f"localport={port}",
+                "profile=private,domain,public",
+            ], capture_output=True)
+            if ret.returncode == 0:
+                logger.info(f"防火墙规则已添加：允许 TCP 端口 {port} 入站")
+            else:
+                logger.warning(
+                    f"防火墙规则添加失败（返回码 {ret.returncode}）。"
+                    f"请手动允许或以管理员身份运行一次。"
+                    f"\n建议命令: netsh advfirewall firewall add rule "
+                    f"name={rule_name} dir=in action=allow protocol=TCP localport={port}"
+                )
+        else:
+            logger.info("防火墙规则已存在，跳过")
+    except Exception:
+        logger.warning(f"检查/添加防火墙规则时出错:\n{traceback.format_exc()}")
 
 
 def run_server(config: AppConfig):
@@ -120,6 +182,10 @@ def main():
         logger.critical(f"获取本机 IP 失败:\n{traceback.format_exc()}")
         ip = "127.0.0.1"
 
+    # 0. 终止旧实例 + 确保防火墙
+    _kill_stale_instance(config.port)
+    _ensure_firewall_rule(config.port)
+
     logger.info(f"  端口      : {config.port}")
     logger.info(f"  保存目录  : {config.save_dir}")
 
@@ -139,12 +205,15 @@ def main():
     except Exception:
         logger.warning(f"mDNS 注册失败（不影响使用，可手动输入IP）:\n{traceback.format_exc()}")
 
-    # 3. 清理回调
+    # 3. 清理回调 — 使用 os._exit(0) 强制终止整个进程
+    #    sys.exit() 在 pystray 回调线程中只终止该线程，无法终止主线程和 uvicorn 非 daemon 线程
     def on_quit():
-        logger.info("用户点击退出")
-        mdns.unregister()
-        logger.info("FilePass 已退出")
-        sys.exit(0)
+        logger.info("用户点击退出，强制终止进程")
+        try:
+            mdns.unregister()
+        except Exception:
+            pass
+        os._exit(0)
 
     # 4. 托盘（主线程阻塞）
     logger.info("即将启动系统托盘…")
@@ -154,8 +223,10 @@ def main():
         tray.run()
     except Exception:
         logger.critical(f"系统托盘异常:\n{traceback.format_exc()}")
+        os._exit(1)
 
-    logger.info("main() 函数结束（不应该到达这里）")
+    # 若 tray.run() 正常返回（不应到达此处）
+    os._exit(0)
 
 
 if __name__ == "__main__":
