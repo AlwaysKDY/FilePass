@@ -1,0 +1,63 @@
+# ========================
+# OS / Editor
+# ========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# ========================
+# Android / Gradle
+# ========================
+android-client/.gradle/
+android-client/.kotlin/
+android-client/build/
+android-client/app/build/
+android-client/local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.tox/
+.venv/
+venv/
+env/
+
+# ========================
+# PyInstaller
+# ========================
+pc-server/build/
+pc-server/dist/
+
+# ========================
+# Distribution / Release
+# ========================
+dist/
+
+# ========================
+# Misc
+# ========================
+*.log
+*.tmp
+*.bak
