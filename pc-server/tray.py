@@ -83,6 +83,12 @@ class TrayApp:
         Path(folder).mkdir(parents=True, exist_ok=True)
         subprocess.Popen(["explorer", folder])
 
+    def _open_push_folder(self):
+        """用资源管理器打开待传手机的缓冲区文件夹。"""
+        folder = os.path.expanduser(self.config.send_to_phone_dir)
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(["explorer", folder])
+
     def _toggle_silent(self):
         self.config.silent_mode = not self.config.silent_mode
         self.config.save()
@@ -115,6 +121,7 @@ class TrayApp:
                 ),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("打开接收文件夹", lambda: self._open_folder()),
+                pystray.MenuItem("打开待传文件夹", lambda: self._open_push_folder()),
                 pystray.MenuItem("退出", lambda: self._quit(icon)),
             ),
         )

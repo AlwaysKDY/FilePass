@@ -52,29 +52,37 @@ class ShareReceiverActivity : ComponentActivity() {
 
         when {
             uri != null -> {
-                showToast("正在发送文件...")
                 var result = apiClient.sendFile(uri, applicationContext)
-                // 失败时尝试重新发现
+                // 失败时尝试重新发现一次
                 if (result.isFailure) {
-                    if (autoDiscover(config)) {
-                        val retryClient = ApiClient(config.baseUrl)
-                        result = retryClient.sendFile(uri, applicationContext)
+                    val rediscovered = findWorkingPc(applicationContext, config, 5_000L)
+                    if (rediscovered != null) {
+                        result = ApiClient(config.baseUrl).sendFile(uri, applicationContext)
                     }
                 }
-                result.onSuccess { name -> showToast("已发送: $name") }
-                    .onFailure { e -> showToast("发送失败: ${e.message}") }
+                result
+                    .onSuccess { name -> showToast("✓ 已发送: $name") }
+                    .onFailure { e ->
+                        val reason = when {
+                            e.message?.contains("413") == true -> "文件超过大小限制 (500 MB)"
+                            e.message?.contains("timeout") == true || e.message?.contains("connect") == true -> "连接超时，请检查网络"
+                            else -> e.message ?: "未知错误"
+                        }
+                        showToast("✗ 发送失败: $reason")
+                    }
                 finish()
             }
             text != null -> {
                 var result = apiClient.sendText(text)
                 if (result.isFailure) {
-                    if (autoDiscover(config)) {
-                        val retryClient = ApiClient(config.baseUrl)
-                        result = retryClient.sendText(text)
+                    val rediscovered = findWorkingPc(applicationContext, config, 5_000L)
+                    if (rediscovered != null) {
+                        result = ApiClient(config.baseUrl).sendText(text)
                     }
                 }
-                result.onSuccess { len -> showToast("已推送 ${len} 字") }
-                    .onFailure { e -> showToast("发送失败: ${e.message}") }
+                result
+                    .onSuccess { len -> showToast("✓ 已推送 $len 字到 PC") }
+                    .onFailure { e -> showToast("✗ 发送失败: ${e.message ?: "未知错误"}") }
                 finish()
             }
             else -> {
@@ -93,20 +101,27 @@ class ShareReceiverActivity : ComponentActivity() {
             return
         }
 
-        showToast("正在发送 ${uris.size} 个文件...")
         var success = 0
-        var fail = 0
+        val failures = mutableListOf<String>()
         for (uri in uris) {
             apiClient.sendFile(uri, applicationContext)
                 .onSuccess { success++ }
-                .onFailure { fail++ }
+                .onFailure { e ->
+                    val reason = when {
+                        e.message?.contains("413") == true -> "超过大小限制"
+                        e.message?.contains("timeout") == true || e.message?.contains("connect") == true -> "连接超时"
+                        else -> e.message ?: "未知错误"
+                    }
+                    failures.add(reason)
+                }
         }
-        showToast("完成: $success 成功, $fail 失败")
+        val total = uris.size
+        if (failures.isEmpty()) {
+            showToast("✓ 全部发送成功 ($total 个文件)")
+        } else {
+            showToast("发送完成: $success 成功, ${failures.size} 失败\n原因: ${failures.first()}")
+        }
         finish()
-    }
-
-    private suspend fun autoDiscover(config: AppConfig): Boolean {
-        return findWorkingPc(applicationContext, config, 5_000L) != null
     }
 
     override fun onDestroy() {

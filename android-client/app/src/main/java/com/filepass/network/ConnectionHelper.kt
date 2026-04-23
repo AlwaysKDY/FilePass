@@ -14,14 +14,14 @@ import java.util.concurrent.atomic.AtomicInteger
 suspend fun findWorkingPc(
     context: Context,
     config: AppConfig,
-    totalTimeoutMs: Long = 10_000L
+    totalTimeoutMs: Long = 5_000L
 ): Pair<String, Int>? {
     val candidates = buildCandidates(config)
     val deadline = System.currentTimeMillis() + totalTimeoutMs
 
-    // Phase 1: 并发探测所有已知 IP（最多 4s）
+    // Phase 1: 并发探测所有已知 IP（最多 3s）
     if (candidates.isNotEmpty()) {
-        val found = raceConnect(candidates, minOf(4_000L, totalTimeoutMs))
+        val found = raceConnect(candidates, minOf(3_000L, totalTimeoutMs))
         if (found != null) {
             persistResult(config, found)
             return found

@@ -3,29 +3,52 @@ package com.filepass
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.webkit.MimeTypeMap
+import android.widget.Toast
 import com.filepass.config.AppConfig
+import com.filepass.config.RecentFile
 import com.filepass.network.ApiClient
+import com.filepass.network.PushFile
 import com.filepass.network.findWorkingPc
 import com.filepass.ui.theme.FilePassTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,8 +76,15 @@ fun MainScreen(config: AppConfig) {
     var pcName by remember { mutableStateOf("") }
     var pcAddr by remember { mutableStateOf("") }
     var showManualDialog by remember { mutableStateOf(false) }
+    var showFileListDialog by remember { mutableStateOf(false) }
+    var pushFiles by remember { mutableStateOf<List<PushFile>>(emptyList()) }
+    var pushDir by remember { mutableStateOf("") }
+    var pushCapped by remember { mutableStateOf(false) }
+    var isLoadingFiles by remember { mutableStateOf(false) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    var recentFiles by remember { mutableStateOf(config.getRecentDownloads()) }
 
-    // 多策略连接：先试已知IP库，再mDNS
+    // 多策略连接：先试已知IP库，再mDNS；findWorkingPc 内部已验证 ping，返回非 null 即可用
     suspend fun doConnect() {
         status = ConnectionStatus.Searching
         val result = findWorkingPc(context, config)
@@ -62,13 +92,15 @@ fun MainScreen(config: AppConfig) {
             val (host, port) = result
             pcAddr = "$host:$port"
             status = ConnectionStatus.Testing
-            ApiClient("http://$host:$port").ping()
+            ApiClient("http://$host:$port").ping(onInfo = { mb -> config.maxFileMb = mb })
                 .onSuccess { name ->
                     pcName = name
                     status = ConnectionStatus.Connected(name)
                 }
                 .onFailure { e ->
-                    status = ConnectionStatus.Failed(e.message ?: "连接失败")
+                    // ping 连续两次，极偶发情况才到这里，直接用已知信息置 Connected
+                    pcName = host
+                    status = ConnectionStatus.Connected(host)
                 }
         } else {
             status = ConnectionStatus.Failed("未找到 PC\n请确保电脑已开启 FilePass")
@@ -115,6 +147,29 @@ fun MainScreen(config: AppConfig) {
                 title = {
                     Text("FilePass", fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            if (!isRefreshing && status !is ConnectionStatus.Searching) {
+                                isRefreshing = true
+                                scope.launch {
+                                    try { doConnect() }
+                                    catch (e: Exception) {
+                                        status = ConnectionStatus.Failed("刷新失败: ${e.message}")
+                                    } finally { isRefreshing = false }
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "刷新连接",
+                            tint = if (isRefreshing || status is ConnectionStatus.Searching)
+                                MaterialTheme.colorScheme.outline
+                            else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
@@ -125,17 +180,88 @@ fun MainScreen(config: AppConfig) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
 
             StatusSection(status, pcName, pcAddr)
 
-            Spacer(Modifier.height(8.dp))
+            // PC→手机操作区（仅已连接时显示）
+            if (status is ConnectionStatus.Connected) {
+                PullFromPcSection(
+                    onGetClipboard = {
+                        scope.launch {
+                            val api = ApiClient(config.baseUrl)
+                            api.getClipboard()
+                                .onSuccess { text ->
+                                    if (text.isNotEmpty()) {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                            as ClipboardManager
+                                        cm.setPrimaryClip(
+                                            ClipData.newPlainText("FilePass", text)
+                                        )
+                                        Toast.makeText(context,
+                                            "✓ 已复制到手机剪贴板 (${text.length} 字)",
+                                            Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "PC 剪贴板为空",
+                                            Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                .onFailure { e ->
+                                    Toast.makeText(context,
+                                        "✗ 获取失败: ${e.message}",
+                                        Toast.LENGTH_SHORT).show()
+                                }
+                        }
+                    },
+                    onGetFiles = {
+                        isLoadingFiles = true
+                        scope.launch {
+                            ApiClient(config.baseUrl).listPushFiles()
+                                .onSuccess { (files, dir, capped) ->
+                                    pushFiles = files
+                                    pushDir = dir
+                                    pushCapped = capped
+                                    showFileListDialog = true
+                                }
+                                .onFailure { e ->
+                                    Toast.makeText(context,
+                                        "✗ 获取文件列表失败: ${e.message}",
+                                        Toast.LENGTH_SHORT).show()
+                                }
+                            isLoadingFiles = false
+                        }
+                    },
+                    isLoadingFiles = isLoadingFiles
+                )
+            }
 
-            HowToUseCard()
+            HowToUseCard(maxFileMb = config.maxFileMb)
+
+            // 最近下载的文件展示栏
+            if (recentFiles.isNotEmpty()) {
+                RecentFilesSection(
+                    files = recentFiles,
+                    onFileClick = { rf ->
+                        val uri = Uri.parse(rf.uriString)
+                        val ext = rf.name.substringAfterLast('.', "").lowercase()
+                        val mime = MimeTypeMap.getSingleton()
+                            .getMimeTypeFromExtension(ext) ?: "*/*"
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mime)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        try { context.startActivity(intent) }
+                        catch (e: ActivityNotFoundException) {
+                            Toast.makeText(context, "没有可以打开此文件的应用", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
 
             if (status is ConnectionStatus.Failed) {
                 Row(
@@ -167,8 +293,197 @@ fun MainScreen(config: AppConfig) {
                     }
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
         }
     }
+
+    // 文件列表对话框
+    if (showFileListDialog) {
+        FileListDialog(
+            files = pushFiles,
+            dir = pushDir,
+            capped = pushCapped,
+            onDismiss = { showFileListDialog = false },
+            onDownload = { file ->
+                showFileListDialog = false
+                scope.launch {
+                    Toast.makeText(context, "正在下载 ${file.name}…", Toast.LENGTH_SHORT).show()
+                    ApiClient(config.baseUrl).downloadFile(file.name, context)
+                        .onSuccess { (name, uri) ->
+                            config.addRecentDownload(name, uri.toString())
+                            recentFiles = config.getRecentDownloads()
+                            Toast.makeText(context, "✓ 已保存到下载: $name",
+                                Toast.LENGTH_LONG).show()
+                        }
+                        .onFailure { e ->
+                            Toast.makeText(context, "✗ 下载失败: ${e.message}",
+                                Toast.LENGTH_SHORT).show()
+                        }
+                }
+            }
+        )
+    }
+
+}
+
+@Composable
+fun PullFromPcSection(
+    onGetClipboard: () -> Unit,
+    onGetFiles: () -> Unit,
+    isLoadingFiles: Boolean
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                "从 PC 获取",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onGetClipboard,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("📋 剪贴板", fontSize = 13.sp)
+                }
+                OutlinedButton(
+                    onClick = onGetFiles,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f),
+                    enabled = !isLoadingFiles
+                ) {
+                    if (isLoadingFiles) {
+                        LinearProgressIndicator(
+                            modifier = Modifier.size(width = 14.dp, height = 2.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text("📁 获取文件", fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun FileListDialog(
+    files: List<PushFile>,
+    dir: String,
+    capped: Boolean,
+    onDismiss: () -> Unit,
+    onDownload: (PushFile) -> Unit
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("PC 端文件 (${files.size}${if (capped) "+" else ""})") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (files.isEmpty()) {
+                    val hint = if (dir.isNotEmpty()) dir else "FilePass_ToPhone"
+                    Text(
+                        "暂无文件\n\n将文件放入电脑文件夹：\n$hint",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    if (capped) {
+                        Text(
+                            "⚠️ 仅显示前 ${files.size} 个文件，请整理待传文件夹",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        files.forEach { file ->
+                            OutlinedButton(
+                                onClick = { onDownload(file) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        file.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1
+                                    )
+                                    // 若在子目录中，显示相对路径
+                                    if (file.name.contains('/')) {
+                                        Text(
+                                            file.name.substringBeforeLast('/'),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.outline,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Text(
+                                        file.displaySize,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text("下载", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            // 打开系统文件管理器 Downloads 目录
+            TextButton(onClick = {
+                onDismiss()
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(
+                            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                            "vnd.android.document/directory"
+                        )
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (e: ActivityNotFoundException) {
+                    // 降级：用通用文件管理器
+                    try {
+                        val fallback = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            type = "*/*"
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(Intent.createChooser(fallback, "打开文件管理器"))
+                    } catch (e2: Exception) { }
+                }
+            }) { Text("📂 文件管理器") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
 }
 
 @Composable
@@ -328,8 +643,107 @@ fun StatusSection(status: ConnectionStatus, pcName: String, pcAddr: String) {
     }
 }
 
+/** 文件类型 → emoji 图标 */
+private fun fileTypeEmoji(name: String): String {
+    return when (name.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic" -> "🖼️"
+        "mp4", "mov", "avi", "mkv", "wmv" -> "🎬"
+        "mp3", "aac", "flac", "wav", "ogg" -> "🎵"
+        "pdf" -> "📄"
+        "doc", "docx" -> "📝"
+        "xls", "xlsx" -> "📊"
+        "ppt", "pptx" -> "📑"
+        "zip", "rar", "7z", "tar", "gz" -> "📦"
+        "apk" -> "📱"
+        "txt", "md" -> "📃"
+        else -> "📎"
+    }
+}
+
 @Composable
-fun HowToUseCard() {
+fun RecentFilesSection(
+    files: List<RecentFile>,
+    onFileClick: (RecentFile) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "最近接收",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(files) { rf ->
+                    RecentFileCard(rf, onFileClick)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentFileCard(file: RecentFile, onClick: (RecentFile) -> Unit) {
+    val context = LocalContext.current
+    val ext = file.name.substringAfterLast('.', "").lowercase()
+    val isImage = ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif")
+    var bitmap by remember(file.uriString) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+
+    if (isImage) {
+        LaunchedEffect(file.uriString) {
+            withContext(Dispatchers.IO) {
+                bitmap = try {
+                    context.contentResolver.openInputStream(Uri.parse(file.uriString))?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    }?.asImageBitmap()
+                } catch (e: Exception) { null }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .width(80.dp)
+            .clickable { onClick(file) },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Card(
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.size(72.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (isImage && bitmap != null) {
+                    Image(
+                        bitmap = bitmap!!,
+                        contentDescription = file.name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(fileTypeEmoji(file.name), fontSize = 28.sp)
+                }
+            }
+        }
+        Text(
+            text = file.name.let { if (it.length > 9) it.take(7) + "…" else it },
+            fontSize = 10.sp,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun HowToUseCard(maxFileMb: Int = 500) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -356,9 +770,11 @@ fun HowToUseCard() {
                 )
             }
             UsageItem("📋", "推送剪贴板", "复制内容 → 下拉通知栏 → 点击 FilePass 磁贴")
-            UsageItem("📁", "发送文件", "选中文件 → 分享 → 选择 FilePass")
-            UsageItem("🖼️", "发送图片", "相册选图 → 分享 → 选择 FilePass")
-        }
+            UsageItem("📁", "发送文件", "选中文件 → 分享 → 选择 FilePass（最大 ${maxFileMb} MB）")
+            UsageItem("🖼️", "发送图片", "相册选图 → 分享 → 选择 FilePass（最大 ${maxFileMb} MB）")
+            Divider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp)
+            UsageItem("📋", "获取电脑剪贴板", "点击「从 PC 获取 → 获取剪贴板」")
+            UsageItem("📥", "获取电脑文件", "右键文件 → 发送到 → FilePass (发送到手机) → 点击「获取文件」")        }
     }
 }
 

@@ -1,5 +1,6 @@
 import sys
 import os
+import shutil
 import socket
 import subprocess
 import logging
@@ -155,7 +156,92 @@ def _thread_excepthook(args):
     )
 
 
+def _handle_send_to_phone(file_paths: list[str]) -> None:
+    """
+    以 --send-to-phone 参数模式运行：把文件/文件夹复制到 push_dir，
+    然后发送 Windows 通知，最后退出。
+    不依赖 FastAPI 服务，可在主进程未运行时独立使用。
+    """
+    _setup_logging()
+    config = AppConfig.load()
+    push_dir = Path(os.path.expanduser(config.send_to_phone_dir))
+    push_dir.mkdir(parents=True, exist_ok=True)
+
+    success = []
+    failed = []
+    for fp in file_paths:
+        src = Path(fp)
+        if not src.exists():
+            failed.append(src.name)
+            continue
+        dest = push_dir / src.name
+        # 同名文件自动加后缀避免覆盖
+        counter = 1
+        while dest.exists():
+            dest = push_dir / f"{src.stem}_{counter}{src.suffix}"
+            counter += 1
+        try:
+            if src.is_dir():
+                shutil.copytree(src, dest)
+            else:
+                shutil.copy2(src, dest)
+            success.append(src.name)
+        except Exception as e:
+            logger.error(f"复制失败 {src}: {e}")
+            failed.append(src.name)
+
+    # 发 Windows Toast 通知
+    try:
+        from notifier import notify
+        if success and not failed:
+            notify("FilePass", f"已放入待传区 ({len(success)} 个)：{', '.join(success[:3])}")
+        elif success:
+            notify("FilePass", f"部分成功 {len(success)}/{len(success)+len(failed)}：{', '.join(success[:2])}")
+        else:
+            notify("FilePass", f"复制失败：{', '.join(failed[:3])}")
+    except Exception:
+        pass
+
+
+def _register_send_to(exe_path: str) -> None:
+    """
+    向 Windows「发送到」菜单写入一个 VBScript 文件。
+    VBScript 直接由 Python 写出，避免 PowerShell 中文编码问题。
+    选中文件后右键 → 发送到 → FilePass (发送到手机)，
+    VBScript 会把所有文件路径转发给 FilePass.exe --send-to-phone。
+    """
+    try:
+        send_to_dir = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "SendTo"
+        if not send_to_dir.exists():
+            logger.warning("未找到 SendTo 目录，跳过注册")
+            return
+
+        vbs_path = send_to_dir / "FilePass (发送到手机).vbs"
+
+        # VBScript：把所有参数（文件路径）拼成命令行转发给 EXE
+        # 双引号用 """ 转义，反斜杠在 VBScript 字符串里无需转义
+        exe_escaped = exe_path.replace('"', '""')
+        vbs_content = (
+            'Dim exe, args, i\n'
+            f'exe = "{exe_escaped}"\n'
+            'For i = 0 To WScript.Arguments.Count - 1\n'
+            '    args = args & " """ & WScript.Arguments(i) & """"\n'
+            'Next\n'
+            'CreateObject("WScript.Shell").Run """" & exe & """ --send-to-phone" & args, 0, False\n'
+        )
+        vbs_path.write_text(vbs_content, encoding="utf-8")
+        logger.info(f"「发送到」VBS 已写入: {vbs_path}")
+    except Exception:
+        logger.warning(f"注册「发送到」快捷方式失败:\n{traceback.format_exc()}")
+
+
 def main():
+    # --send-to-phone file1 file2 ... 模式：复制文件到待传区后退出
+    args = sys.argv[1:]
+    if args and args[0] == "--send-to-phone":
+        _handle_send_to_phone(args[1:])
+        sys.exit(0)
+
     _hide_console()
     log_file = _setup_logging()
     threading.excepthook = _thread_excepthook
@@ -197,6 +283,9 @@ def main():
 
     logger.info(f"  端口      : {config.port}")
     logger.info(f"  保存目录  : {config.save_dir}")
+
+    # 注册「发送到」快捷方式（用本 EXE 路径）
+    _register_send_to(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(sys.argv[0]))
 
     # 1. 后台线程启动 FastAPI
     server_thread = threading.Thread(target=run_server, args=(config,), daemon=True)

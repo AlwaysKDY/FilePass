@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置 — 生成单文件 FilePass.exe"""
+import PyInstaller.config
+PyInstaller.config.CONF['distpath'] = './dist'
 
 a = Analysis(
     ['main.py'],
@@ -46,5 +48,4 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     icon=None,
-    distpath='../release',
 )

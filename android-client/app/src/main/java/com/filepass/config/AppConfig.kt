@@ -3,6 +3,11 @@ package com.filepass.config
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** 最近下载的文件记录 */
+data class RecentFile(val name: String, val uriString: String, val timestamp: Long)
 
 /**
  * 持久化配置管理：Token、PC 地址、端口。
@@ -31,6 +36,9 @@ class AppConfig(context: Context) {
     val isConfigured: Boolean
         get() = pcHost.isNotEmpty()
 
+    /** 上次 ping 返回的最大文件大小（MB），默认 500，运行时更新 */
+    var maxFileMb: Int = 500
+
     /** 曾经成功连接过的 IP 库，格式 "host:port" */
     val ipLibraryPairs: List<Pair<String, Int>>
         get() = (prefs.getStringSet(KEY_IP_LIBRARY, emptySet()) ?: emptySet()).mapNotNull {
@@ -49,12 +57,42 @@ class AppConfig(context: Context) {
         prefs.edit { clear() }
     }
 
+    /** 获取最近下载的文件列表（最多 10 条，最新在前）*/
+    fun getRecentDownloads(): List<RecentFile> {
+        val json = prefs.getString(KEY_RECENT_DOWNLOADS, "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                RecentFile(obj.getString("name"), obj.getString("uri"), obj.getLong("ts"))
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** 添加一条下载记录（自动去重、截断为 10 条）*/
+    fun addRecentDownload(name: String, uriString: String) {
+        val list = getRecentDownloads().toMutableList()
+        list.removeAll { it.name == name }
+        list.add(0, RecentFile(name, uriString, System.currentTimeMillis()))
+        val trimmed = list.take(10)
+        val arr = JSONArray()
+        trimmed.forEach { rf ->
+            arr.put(JSONObject().apply {
+                put("name", rf.name)
+                put("uri", rf.uriString)
+                put("ts", rf.timestamp)
+            })
+        }
+        prefs.edit { putString(KEY_RECENT_DOWNLOADS, arr.toString()) }
+    }
+
     companion object {
         private const val PREFS_NAME = "filepass_config"
         private const val KEY_HOST = "pc_host"
         private const val KEY_PORT = "pc_port"
         private const val KEY_CONNECTED = "connected"
         private const val KEY_IP_LIBRARY = "ip_library"
+        private const val KEY_RECENT_DOWNLOADS = "recent_downloads"
         const val DEFAULT_PORT = 8765
     }
 }

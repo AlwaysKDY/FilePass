@@ -6,7 +6,7 @@ import aiofiles
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
 from config import AppConfig
@@ -40,12 +40,17 @@ def create_app(config: AppConfig) -> FastAPI:
     save_dir = Path(os.path.expanduser(config.save_dir))
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # 电脑→手机 文件推送目录（用户把文件放这里，手机 App 可浏览下载）
+    push_dir = Path(os.path.expanduser(config.send_to_phone_dir))
+    push_dir.mkdir(parents=True, exist_ok=True)
+
     @app.get("/api/ping")
     async def ping():
         return {
             "status": "ok",
             "name": socket.gethostname(),
             "version": "1.0.0",
+            "max_file_mb": config.max_file_size_mb,
         }
 
     @app.post("/api/text")
@@ -115,5 +120,40 @@ def create_app(config: AppConfig) -> FastAPI:
         except Exception as e:
             logger.error(f"读取剪贴板失败: {e}")
             raise HTTPException(500, "读取剪贴板失败")
+
+    MAX_PUSH_FILES = 200  # 最多返回文件数
+
+    @app.get("/api/push/files")
+    async def list_push_files():
+        """递归列出推送目录中所有文件（含子目录），最多 MAX_PUSH_FILES 条。"""
+        files = []
+        try:
+            for f in sorted(push_dir.rglob("*")):
+                if not f.is_file():
+                    continue
+                # 相对路径作为 name，保留子目录结构，供下载接口使用
+                rel = f.relative_to(push_dir).as_posix()
+                files.append({"name": rel, "size": f.stat().st_size})
+                if len(files) >= MAX_PUSH_FILES:
+                    break
+        except Exception as e:
+            logger.error(f"列出推送文件失败: {e}")
+        return {"files": files, "dir": str(push_dir), "total": len(files), "capped": len(files) >= MAX_PUSH_FILES}
+
+    @app.get("/api/push/download/{filepath:path}")
+    async def download_push_file(filepath: str):
+        """下载推送目录中的文件（支持子目录路径，防路径穿越）。"""
+        # 规范化，移除多余分隔符、不允许绝对路径
+        clean = Path(filepath.replace("\\", "/"))
+        if clean.is_absolute() or ".." in clean.parts:
+            raise HTTPException(403, "禁止访问")
+        path = (push_dir / clean).resolve()
+        if not path.is_relative_to(push_dir.resolve()):
+            raise HTTPException(403, "禁止访问")
+        if not path.exists() or not path.is_file():
+            raise HTTPException(404, "文件不存在")
+        logger.info(f"推送文件到手机: {clean}")
+        return FileResponse(str(path), filename=path.name,
+                            media_type="application/octet-stream")
 
     return app
