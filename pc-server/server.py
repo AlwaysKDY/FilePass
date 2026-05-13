@@ -156,4 +156,31 @@ def create_app(config: AppConfig) -> FastAPI:
         return FileResponse(str(path), filename=path.name,
                             media_type="application/octet-stream")
 
+    @app.delete("/api/push/delete/{filepath:path}")
+    async def delete_push_file(filepath: str):
+        """彻底删除待传目录中的文件（仅限待传文件夹内，非源文件）。"""
+        clean = Path(filepath.replace("\\", "/"))
+        if clean.is_absolute() or ".." in clean.parts:
+            raise HTTPException(403, "禁止访问")
+        path = (push_dir / clean).resolve()
+        if not path.is_relative_to(push_dir.resolve()):
+            raise HTTPException(403, "禁止访问")
+        if not path.exists() or not path.is_file():
+            raise HTTPException(404, "文件不存在")
+        try:
+            path.unlink()
+            logger.info(f"已删除待传文件: {clean}")
+            # 清理空的父目录（仅在 push_dir 内）
+            parent = path.parent
+            while parent != push_dir.resolve() and parent.is_relative_to(push_dir.resolve()):
+                if not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+                else:
+                    break
+            return {"status": "ok", "deleted": str(clean)}
+        except Exception as e:
+            logger.error(f"删除待传文件失败: {e}")
+            raise HTTPException(500, f"删除失败: {e}")
+
     return app

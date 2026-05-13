@@ -86,6 +86,44 @@ class AppConfig(context: Context) {
         prefs.edit { putString(KEY_RECENT_DOWNLOADS, arr.toString()) }
     }
 
+    /** 删除一条下载记录 */
+    fun removeRecentDownload(name: String) {
+        val list = getRecentDownloads().toMutableList()
+        list.removeAll { it.name == name }
+        val arr = JSONArray()
+        list.forEach { rf ->
+            arr.put(JSONObject().apply {
+                put("name", rf.name)
+                put("uri", rf.uriString)
+                put("ts", rf.timestamp)
+            })
+        }
+        prefs.edit { putString(KEY_RECENT_DOWNLOADS, arr.toString()) }
+    }
+
+    /** 获取设备别名，无别名返回 null */
+    fun getDeviceAlias(host: String, port: Int): String? {
+        val json = prefs.getString(KEY_DEVICE_ALIASES, "{}") ?: "{}"
+        return try {
+            val obj = JSONObject(json)
+            val key = "$host:$port"
+            if (obj.has(key)) obj.getString(key) else null
+        } catch (_: Exception) { null }
+    }
+
+    /** 设置设备别名 */
+    fun setDeviceAlias(host: String, port: Int, alias: String) {
+        val json = prefs.getString(KEY_DEVICE_ALIASES, "{}") ?: "{}"
+        val obj = try { JSONObject(json) } catch (_: Exception) { JSONObject() }
+        if (alias.isBlank()) obj.remove("$host:$port") else obj.put("$host:$port", alias.trim())
+        prefs.edit { putString(KEY_DEVICE_ALIASES, obj.toString()) }
+    }
+
+    /** 获取设备显示名称（别名 > hostname > IP） */
+    fun getDeviceDisplayName(host: String, port: Int, hostname: String? = null): String {
+        return getDeviceAlias(host, port) ?: hostname?.takeIf { it.isNotBlank() } ?: host
+    }
+
     companion object {
         private const val PREFS_NAME = "filepass_config"
         private const val KEY_HOST = "pc_host"
@@ -93,6 +131,7 @@ class AppConfig(context: Context) {
         private const val KEY_CONNECTED = "connected"
         private const val KEY_IP_LIBRARY = "ip_library"
         private const val KEY_RECENT_DOWNLOADS = "recent_downloads"
+        private const val KEY_DEVICE_ALIASES = "device_aliases"
         const val DEFAULT_PORT = 8765
     }
 }

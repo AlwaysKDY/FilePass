@@ -55,6 +55,8 @@ pc-server/dist/
 # ========================
 release/*.exe
 release/*.apk
+FilePass.apk
+FilePass.exe
 
 # ========================
 # Distribution / Release (old path)

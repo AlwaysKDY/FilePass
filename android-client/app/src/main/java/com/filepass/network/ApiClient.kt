@@ -148,7 +148,7 @@ class ApiClient(
         }.recoverCatching { mapNetworkError(it) }
     }
 
-    /** 从 PC 推送目录下载一个文件到手机 Downloads，支持子目录路径 */
+    /** 从 PC 推送目录下载一个文件到手机 Documents/FilePass/接收文件 文件夹，支持子目录路径 */
     suspend fun downloadFile(filename: String, context: Context): Result<Pair<String, android.net.Uri>> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -167,25 +167,27 @@ class ApiClient(
                     if (!resp.isSuccessful) throw httpError(resp.code, resp.body?.string())
 
                     val resolver = context.contentResolver
+                    val displayName = filename.substringAfterLast('/')
                     val values = ContentValues().apply {
-                        put(MediaStore.Downloads.DISPLAY_NAME, filename)
-                        put(MediaStore.Downloads.IS_PENDING, 1)
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "Documents/FilePass/接收文件")
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
-                    val collection = MediaStore.Downloads.getContentUri(
+                    val collection = MediaStore.Files.getContentUri(
                         MediaStore.VOLUME_EXTERNAL_PRIMARY
                     )
                     val itemUri = resolver.insert(collection, values)
-                        ?: throw IOException("无法在 Downloads 创建文件")
+                        ?: throw IOException("无法在 Documents/FilePass/接收文件 创建文件")
 
                     resolver.openOutputStream(itemUri)?.use { out ->
                         resp.body!!.byteStream().copyTo(out)
                     }
 
                     values.clear()
-                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                     resolver.update(itemUri, values, null, null)
 
-                    Pair(filename, itemUri)
+                    Pair(displayName, itemUri)
                 }
             }.recoverCatching { mapNetworkError(it) }
         }
@@ -193,6 +195,23 @@ class ApiClient(
     fun shutdown() {
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
+    }
+
+    /** 删除 PC 待传目录中的文件（彻底删除，非源文件） */
+    suspend fun deletePushFile(filename: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val encodedPath = filename.split("/")
+                .joinToString("/") { Uri.encode(it) }
+            val request = Request.Builder()
+                .url("$baseUrl/api/push/delete/$encodedPath")
+                .delete()
+                .build()
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) throw httpError(resp.code, resp.body?.string())
+                val json = JSONObject(resp.body!!.string())
+                json.getString("deleted")
+            }
+        }.recoverCatching { mapNetworkError(it) }
     }
 
     private fun httpError(code: Int, body: String?): IOException {
